@@ -19,9 +19,11 @@ No Python, Node.js, or external dependencies required.
 - **Tampermonkey Extension Check**: Verifies whether **Tampermonkey** is installed in the selected browser (`dhdgffkkebhmkfjojejmpbldmpobfkfo` for Brave/Chrome or `iikmkjmpaadaobahmlepeloendndfphd` for Microsoft Edge). If missing, provides a 1-click button to open the official [Chrome Web Store](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo?utm_source=ext_app_menu) or [Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd) page.
 - **`"Allow User Scripts"` / Developer Mode Verification**: Reads the browser's extension preferences to verify that Manifest V3 user script execution is enabled for Tampermonkey, with a 1-click shortcut to `brave://extensions`, `chrome://extensions`, or `edge://extensions`.
 - **1-Click Localhost Userscript Installer**: Runs an embedded background HTTP server (`http://127.0.0.1:18923/fab-quixel-auto-claimer.user.js`) that triggers Tampermonkey's native installation tab with a single click—plus a **Copy Code** clipboard fallback.
-- **Auto-Run Launch**: Opens `https://www.fab.com/sellers/Quixel%20Megascans?is_free=1&fab_autorun=1` in a new window of your selected browser and automatically starts claiming assets.
+- **Custom `view_in_ar` Executable Icon & Clean Window**: Embedded multi-resolution Windows icon (`view_in_ar` Material Symbols Rounded in `#e3e3e3`) with standard native Windows window controls.
+- **Auto-Run Launch**: Opens `https://www.fab.com/sellers/Quixel%20Megascans?is_free=1&fab_autorun=1` in a new window of your selected browser and automatically starts claiming assets once login is verified.
 
-### 2. 🎯 Smart Hover + Click Automation (Filter-Safe)
+### 2. 🎯 Smart Hover + Click Automation & Login Guard (Filter-Safe)
+- **Automatic Fab.com Login Verification**: Checks whether you are signed in to Fab.com when the page opens (and when clicking **`▶ Start`**) via both the header DOM and Fab's `/i/users/me/listings-states` endpoint. If you are not logged in, the script refuses to start and prompts you to sign in first.
 - **React-Compatible Event Simulation**: Dispatches full pointer and mouse event sequences (`pointerover`, `mouseover`, `pointerenter`, `mouseenter`, `mousemove`) on each `"From Free"` product card to reveal the top-right **`⊞+` ("Add to My Library")** button, clicks it, and waits for **`"✔ Saved in My Library"`** confirmation.
 - **Zero Filter Interference**: Strictly scopes clicks to product cards and never touches or resets your active page filters (`is_free=1`, unchecked *"Show products in My Library"*, or sorting).
 
@@ -86,8 +88,8 @@ No Python, Node.js, or external dependencies required.
 Get-FileHash .\FabQuixelLauncher.exe -Algorithm SHA256
 ```
 
-- **`FabQuixelLauncher.exe`**: `C7F8FA771C460A3A903E471C57B6C89ECE82389E982F6C87522717307531A01E`
-- **`fab-quixel-auto-claimer.user.js`**: `E3C26B3535A6A6FBD3F8A9DCB6F1855B5D352FBB819A765CAB9D6EF19F0FF1D1`
+- **`FabQuixelLauncher.exe`**: `948D4DD2D2D8DE96847E39C28AAB0F4E1546EB0D28E418E1A8C27C89DF4E0F84`
+- **`fab-quixel-auto-claimer.user.js`**: `FD0ECE06810D2F3D41996C29FD3BC1999E29FCDFA38862F49F689F73238D47B9`
 
 ---
 

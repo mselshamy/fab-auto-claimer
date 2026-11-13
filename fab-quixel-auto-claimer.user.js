@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Fab Quixel Auto Claimer
 // @namespace    https://www.fab.com/
-// @version      6.1.0
-// @description  Automatically claims free Quixel Megascans assets on Fab.com with live ETA calculator, RAM guard, and auto-reload.
+// @version      6.2.0
+// @description  Automatically claims free Quixel Megascans assets on Fab.com with login verification, live ETA calculator, RAM guard, and auto-reload.
 // @match        https://www.fab.com/sellers/*
 // @match        https://www.fab.com/*/sellers/*
 // @match        https://www.fab.com/search*
@@ -57,7 +57,48 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // 1. Parse Remaining Asset Count from Sidebar ("All products 4.6K")
+  // --- 0. Check if User is Logged In to Fab.com ---
+  function hasSignInButtonInHeader() {
+    const headerEls = Array.from(document.querySelectorAll('header a, header button, nav a, nav button, a[href*="login"], a[href*="authorize"]'));
+    for (const el of headerEls) {
+      const rect = el.getBoundingClientRect();
+      if (rect.top > 100 || rect.width === 0) continue;
+      const txt = (el.innerText || el.getAttribute('aria-label') || '').trim().toLowerCase();
+      if (txt === 'sign in' || txt === 'log in' || txt === 'signin') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function isUserLoggedIn() {
+    // 1. Check if top navbar shows a "Sign in" button
+    if (hasSignInButtonInHeader()) {
+      return false;
+    }
+
+    // 2. Verify with Fab's authenticated user endpoint
+    try {
+      const res = await fetch('https://www.fab.com/i/users/me/listings-states?listing_ids=00000000-0000-0000-0000-000000000000', {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'Accept': 'application/json, text/plain, */*',
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      });
+      if (res.status === 401 || res.status === 403) {
+        return false;
+      }
+    } catch (e) {
+      // If network check fails, rely on header DOM check
+      if (hasSignInButtonInHeader()) return false;
+    }
+
+    return true;
+  }
+
+  // --- 1. Parse Remaining Asset Count from Sidebar ("All products 4.6K") ---
   function parseCompactCount(str) {
     if (!str) return null;
     const cleaned = str.trim().replace(/,/g, '').toUpperCase();
@@ -94,7 +135,7 @@
     return Math.max(0, state.initialPageRemaining - state.addedSession);
   }
 
-  // 2. Time Remaining (ETA) Calculator
+  // --- 2. Time Remaining (ETA) Calculator ---
   function formatDuration(totalSeconds) {
     if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return '0s';
     const hrs = Math.floor(totalSeconds / 3600);
@@ -128,7 +169,7 @@
     };
   }
 
-  // 3. Live Memory Usage Monitor
+  // --- 3. Live Memory Usage Monitor ---
   function getMemoryStats() {
     let heapMB = null;
     if (window.performance && window.performance.memory) {
@@ -176,7 +217,7 @@
     return 'OK';
   }
 
-  // 4. Strip Thumbnail Bitmaps Immediately After Claiming
+  // --- 4. Strip Thumbnail Bitmaps Immediately After Claiming ---
   function stripCardMemory(card) {
     if (!card) return;
     card.querySelectorAll('img, video, canvas').forEach((media) => {
@@ -190,7 +231,7 @@
     });
   }
 
-  // 5. Real Page Reload
+  // --- 5. Real Page Reload ---
   function triggerHardPageReload() {
     state.reloadCount++;
     saveState();
@@ -200,7 +241,7 @@
     }, 500);
   }
 
-  // 6. Watch for HTTP 429 Rate Limits in Background
+  // --- 6. Watch for HTTP 429 Rate Limits in Background ---
   if (!window.__fabNetWrapped) {
     window.__fabNetWrapped = true;
     const origFetch = window.fetch;
@@ -217,7 +258,7 @@
     };
   }
 
-  // 7. Card & Button Detection (Leaves filters untouched!)
+  // --- 7. Card & Button Detection (Leaves filters untouched!) ---
   function getProductCards() {
     const links = Array.from(document.querySelectorAll('a[href*="/listings/"]'));
     const cards = [];
@@ -322,7 +363,7 @@
     return isCardSavedInLibrary(card);
   }
 
-  // Main Loop
+  // --- Main Loop ---
   async function runLoop() {
     updateUI('⏳ Waiting for page cards to load...');
 
@@ -330,6 +371,20 @@
       if (getProductCards().length > 0) break;
       await sleep(500);
     }
+
+    // Verify user is logged in before starting!
+    const loggedIn = await isUserLoggedIn();
+    if (!loggedIn) {
+      state.running = false;
+      saveState();
+      elStatus.style.background = '#7f1d1d';
+      elStatus.style.color = '#fecaca';
+      updateUI('⚠️ Not logged in! Please sign in to Fab.com first.');
+      return;
+    }
+
+    elStatus.style.background = '#1f2937';
+    elStatus.style.color = '#e5e7eb';
 
     const detectedCount = detectRemainingAssetsCount();
     if (detectedCount !== null) {
@@ -474,7 +529,7 @@
     </div>
 
     <div id="fab-ac-status" style="margin-bottom:8px;padding:7px 9px;background:#1f2937;border-radius:6px;color:#e5e7eb;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-      ${state.running ? '🚀 Auto-resuming...' : 'Ready'}
+      Checking login status...
     </div>
 
     <div style="margin-bottom:8px;background:#030712;padding:8px 10px;border-radius:8px;border:1px solid #1e293b;">
@@ -628,7 +683,21 @@
     saveState();
   });
 
-  btnToggle.addEventListener('click', () => {
+  btnToggle.addEventListener('click', async () => {
+    if (!state.running) {
+      const loggedIn = await isUserLoggedIn();
+      if (!loggedIn) {
+        state.running = false;
+        saveState();
+        elStatus.style.background = '#7f1d1d';
+        elStatus.style.color = '#fecaca';
+        updateUI('⚠️ Not logged in! Please sign in to Fab.com first.');
+        return;
+      }
+      elStatus.style.background = '#1f2937';
+      elStatus.style.color = '#e5e7eb';
+    }
+
     state.running = !state.running;
     saveState();
     updateUI(state.running ? '🚀 Starting...' : '⏸ Paused');
@@ -650,9 +719,22 @@
     panel.remove();
   });
 
-  updateUI();
+  // Initial check on page load
+  (async () => {
+    await sleep(1000);
+    const loggedIn = await isUserLoggedIn();
+    if (!loggedIn) {
+      state.running = false;
+      saveState();
+      elStatus.style.background = '#7f1d1d';
+      elStatus.style.color = '#fecaca';
+      updateUI('⚠️ Not logged in! Please sign in to Fab.com first.');
+      return;
+    }
 
-  if (state.running) {
-    runLoop();
-  }
+    updateUI(state.running ? '🚀 Auto-resuming...' : 'Ready');
+    if (state.running) {
+      runLoop();
+    }
+  })();
 })();
