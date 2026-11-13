@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Fab.com Quixel Megascans Auto-Claimer (v6 ETA Calculator + Auto-Reload)
+// @name         Fab Quixel Auto Claimer
 // @namespace    https://www.fab.com/
-// @version      6.0.0
-// @description  Claims free Quixel Megascans assets without touching page filters, includes Delay slider, Live ETA / Remaining Time Calculator, RAM Guard, and Auto-Reload!
+// @version      6.1.0
+// @description  Automatically claims free Quixel Megascans assets on Fab.com with live ETA calculator, RAM guard, and auto-reload.
 // @match        https://www.fab.com/sellers/*
 // @match        https://www.fab.com/*/sellers/*
 // @match        https://www.fab.com/search*
@@ -11,16 +11,15 @@
 // @grant        none
 // ==/UserScript==
 
-(async function fabTampermonkeyAutoClaimerV6() {
+(async function fabQuixelAutoClaimer() {
   'use strict';
 
-  if (window.__fabV6Loaded) return;
-  window.__fabV6Loaded = true;
+  if (window.__fabAutoClaimerLoaded) return;
+  window.__fabAutoClaimerLoaded = true;
 
   const STORAGE_KEY = 'fab_v6_tampermonkey_state';
   const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
 
-  // Check if launched with ?fab_autorun=1 from our Executable Launcher
   const urlParams = new URLSearchParams(window.location.search);
   const isAutoRunParam = urlParams.get('fab_autorun') === '1';
 
@@ -36,7 +35,6 @@
     initialPageRemaining: null,                   // Parsed from sidebar (e.g. "4.6K" -> 4600)
     avgActionOverheadMs: saved.avgActionOverheadMs || 750, // Measured hover+click+save time (ms)
     skippedCount: 0,
-    rateLimitHits: 0,
     cooldownUntil: 0,
     emptyScrolls: 0
   };
@@ -59,7 +57,7 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // --- 1. Parse Remaining Asset Count from Page Sidebar ("All products 4.6K") ---
+  // 1. Parse Remaining Asset Count from Sidebar ("All products 4.6K")
   function parseCompactCount(str) {
     if (!str) return null;
     const cleaned = str.trim().replace(/,/g, '').toUpperCase();
@@ -73,19 +71,15 @@
   }
 
   function detectRemainingAssetsCount() {
-    // Look for "All products" in the left sidebar and read its numeric badge
     const elements = Array.from(document.querySelectorAll('a, button, div, li'));
     for (const el of elements) {
       const rect = el.getBoundingClientRect();
-      if (rect.left > 350 || rect.width === 0) continue; // Only check left sidebar
+      if (rect.left > 350 || rect.width === 0) continue;
       const text = (el.innerText || '').trim();
-      // Matches e.g. "All products\n4.6K" or "All products 4,520"
       const m = text.match(/all\s+products[\s\n]+(\d+(?:[.,]\d+)?\s*[KMkm]?)/i);
       if (m && m[1]) {
         const parsed = parseCompactCount(m[1]);
-        if (parsed !== null && parsed > 0) {
-          return parsed;
-        }
+        if (parsed !== null && parsed > 0) return parsed;
       }
     }
     return null;
@@ -94,15 +88,13 @@
   function getEstimatedRemainingAssets() {
     if (state.initialPageRemaining === null) {
       const detected = detectRemainingAssetsCount();
-      if (detected !== null) {
-        state.initialPageRemaining = detected;
-      }
+      if (detected !== null) state.initialPageRemaining = detected;
     }
     if (state.initialPageRemaining === null) return null;
     return Math.max(0, state.initialPageRemaining - state.addedSession);
   }
 
-  // --- 2. Time Remaining (ETA) Calculator ---
+  // 2. Time Remaining (ETA) Calculator
   function formatDuration(totalSeconds) {
     if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return '0s';
     const hrs = Math.floor(totalSeconds / 3600);
@@ -115,7 +107,6 @@
 
   function getETADetails() {
     const remaining = getEstimatedRemainingAssets();
-    // Effective time per item = user delayMs + measured hover/click/verify overhead + amortized page reload time (~4s every N items)
     const reloadAmortizedMs = Math.round(4500 / Math.max(1, state.refreshEveryN));
     const msPerItem = state.delayMs + state.avgActionOverheadMs + reloadAmortizedMs;
     const secPerItem = (msPerItem / 1000).toFixed(1);
@@ -137,7 +128,7 @@
     };
   }
 
-  // --- 3. Live Memory Usage Monitor ---
+  // 3. Live Memory Usage Monitor
   function getMemoryStats() {
     let heapMB = null;
     if (window.performance && window.performance.memory) {
@@ -185,7 +176,7 @@
     return 'OK';
   }
 
-  // --- 4. Strip Thumbnail Bitmaps Immediately After Claiming ---
+  // 4. Strip Thumbnail Bitmaps Immediately After Claiming
   function stripCardMemory(card) {
     if (!card) return;
     card.querySelectorAll('img, video, canvas').forEach((media) => {
@@ -199,7 +190,7 @@
     });
   }
 
-  // --- 5. Real Page Reload (Tampermonkey Auto-Resumes After Reload!) ---
+  // 5. Real Page Reload
   function triggerHardPageReload() {
     state.reloadCount++;
     saveState();
@@ -209,25 +200,24 @@
     }, 500);
   }
 
-  // --- 6. Watch for HTTP 429 Rate Limits ---
-  if (!window.__fabV6NetWrapped) {
-    window.__fabV6NetWrapped = true;
+  // 6. Watch for HTTP 429 Rate Limits in Background
+  if (!window.__fabNetWrapped) {
+    window.__fabNetWrapped = true;
     const origFetch = window.fetch;
     window.fetch = async function (...args) {
       const res = await origFetch.apply(this, args);
       if (res.status === 429) {
-        state.rateLimitHits++;
         const waitSec = parseInt(res.headers?.get('Retry-After') || '30', 10) || 30;
         state.cooldownUntil = Math.max(state.cooldownUntil, Date.now() + waitSec * 1000);
         state.delayMs = Math.min(2500, state.delayMs + 100);
         saveState();
-        updateUI(`⏳ Epic 429 Rate Limit! Cooling down ${waitSec}s...`);
+        updateUI(`⏳ Server busy, cooling down ${waitSec}s...`);
       }
       return res;
     };
   }
 
-  // --- 7. Card & Button Detection (Does NOT touch page filters!) ---
+  // 7. Card & Button Detection (Leaves filters untouched!)
   function getProductCards() {
     const links = Array.from(document.querySelectorAll('a[href*="/listings/"]'));
     const cards = [];
@@ -332,7 +322,7 @@
     return isCardSavedInLibrary(card);
   }
 
-  // --- Main Loop (Leaves filters untouched!) ---
+  // Main Loop
   async function runLoop() {
     updateUI('⏳ Waiting for page cards to load...');
 
@@ -341,7 +331,6 @@
       await sleep(500);
     }
 
-    // Detect initial remaining count from sidebar once cards load
     const detectedCount = detectRemainingAssetsCount();
     if (detectedCount !== null) {
       state.initialPageRemaining = detectedCount;
@@ -362,7 +351,7 @@
 
       while (state.running && Date.now() < state.cooldownUntil) {
         const rem = Math.ceil((state.cooldownUntil - Date.now()) / 1000);
-        updateUI(`⏳ 429 Cooldown: waiting ${rem}s...`);
+        updateUI(`⏳ Cooling down: waiting ${rem}s...`);
         await sleep(1000);
       }
       if (!state.running) break;
@@ -376,10 +365,10 @@
         const mStat = checkMemoryThreshold();
         if (mStat === 'STOP' || mStat === 'RELOAD') return;
 
-        if (card.dataset.fabV6Done === 'true') continue;
+        if (card.dataset.fabClaimedDone === 'true') continue;
 
         if (isCardSavedInLibrary(card)) {
-          card.dataset.fabV6Done = 'true';
+          card.dataset.fabClaimedDone = 'true';
           stripCardMemory(card);
           card.style.outline = '1px solid rgba(34, 197, 94, 0.35)';
           state.skippedCount++;
@@ -415,11 +404,10 @@
           const savedOk = await waitForCardSaved(card, 4000);
 
           if (savedOk) {
-            // Update moving average of action overhead (hover + click + server response)
             const actionElapsed = Date.now() - actionStart;
             state.avgActionOverheadMs = state.avgActionOverheadMs * 0.8 + actionElapsed * 0.2;
 
-            card.dataset.fabV6Done = 'true';
+            card.dataset.fabClaimedDone = 'true';
             card.style.outline = '2px solid #22c55e';
             stripCardMemory(card);
 
@@ -433,16 +421,16 @@
               return;
             }
           } else if (Date.now() < state.cooldownUntil) {
-            updateUI('⏳ Rate-limited, will retry item after cooldown...');
+            updateUI('⏳ Cooling down, will retry item...');
             break;
           } else {
-            card.dataset.fabV6Done = 'true';
+            card.dataset.fabClaimedDone = 'true';
             stripCardMemory(card);
           }
 
           await sleep(state.delayMs);
         } else {
-          card.dataset.fabV6Done = 'true';
+          card.dataset.fabClaimedDone = 'true';
         }
       }
 
@@ -469,11 +457,11 @@
     }
   }
 
-  // --- Floating UI Panel ---
+  // Floating UI Panel
   const panel = document.createElement('div');
-  panel.id = 'fab-v6-panel';
+  panel.id = 'fab-claimer-panel';
   panel.style.cssText = `
-    position: fixed; bottom: 20px; right: 20px; z-index: 999999; width: 355px;
+    position: fixed; bottom: 20px; right: 20px; z-index: 999999; width: 350px;
     background: #111827; color: #f9fafb; border: 1px solid #22c55e; border-radius: 12px;
     padding: 14px 16px; font-family: system-ui, -apple-system, sans-serif; font-size: 13px;
     box-shadow: 0 16px 40px rgba(0,0,0,0.85); user-select: none;
@@ -481,97 +469,87 @@
 
   panel.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;border-bottom:1px solid #1f2937;padding-bottom:8px;">
-      <div>
-        <strong style="font-size:14px;color:#4ade80;">🛡️ Fab Auto-Claimer v6</strong>
-        <span style="font-size:10px;background:#16a34a;color:#fff;padding:2px 5px;border-radius:4px;margin-left:6px;">ETA + RAM</span>
-      </div>
-      <span style="font-size:11px;color:#9ca3af;">Reloads: <b id="fab-v6-reloads" style="color:#38bdf8;">${state.reloadCount}</b></span>
+      <strong style="font-size:14px;color:#4ade80;">Fab Quixel Auto Claimer</strong>
+      <button id="fab-ac-close" title="Close" style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:15px;font-weight:700;line-height:1;padding:2px 6px;border-radius:4px;">X</button>
     </div>
 
-    <div id="fab-v6-status" style="margin-bottom:8px;padding:7px 9px;background:#1f2937;border-radius:6px;color:#e5e7eb;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-      ${state.running ? '🚀 Auto-resuming...' : 'Ready — Click Start below'}
+    <div id="fab-ac-status" style="margin-bottom:8px;padding:7px 9px;background:#1f2937;border-radius:6px;color:#e5e7eb;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+      ${state.running ? '🚀 Auto-resuming...' : 'Ready'}
     </div>
 
-    <!-- ETA / Time Remaining Calculator Box -->
     <div style="margin-bottom:8px;background:#030712;padding:8px 10px;border-radius:8px;border:1px solid #1e293b;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
         <span style="font-size:11px;color:#9ca3af;">⏱️ Est. Time Remaining:</span>
-        <span id="fab-v6-eta" style="font-size:13px;font-weight:700;color:#38bdf8;">Calculating...</span>
+        <span id="fab-ac-eta" style="font-size:13px;font-weight:700;color:#38bdf8;">Calculating...</span>
       </div>
       <div style="display:flex;justify-content:space-between;font-size:10px;color:#64748b;">
-        <span id="fab-v6-rem-assets">Remaining: Scanning...</span>
-        <span id="fab-v6-pace">Pace: --</span>
+        <span id="fab-ac-rem-assets">Remaining: Scanning...</span>
+        <span id="fab-ac-pace">Pace: --</span>
       </div>
     </div>
 
-    <!-- Live Memory Meter -->
     <div style="margin-bottom:10px;background:#030712;padding:8px 10px;border-radius:8px;border:1px solid #1f2937;">
       <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;">
         <span style="color:#9ca3af;">Est. Tab Memory / Limit:</span>
-        <span id="fab-v6-mem-text" style="font-weight:700;color:#4ade80;">-- MB / ${state.memLimitMB} MB</span>
+        <span id="fab-ac-mem-text" style="font-weight:700;color:#4ade80;">-- MB / ${state.memLimitMB} MB</span>
       </div>
       <div style="width:100%;height:6px;background:#1f2937;border-radius:3px;overflow:hidden;">
-        <div id="fab-v6-mem-bar" style="width:20%;height:100%;background:#22c55e;transition:width 0.3s;"></div>
+        <div id="fab-ac-mem-bar" style="width:20%;height:100%;background:#22c55e;transition:width 0.3s;"></div>
       </div>
-      <div id="fab-v6-dom-text" style="font-size:10px;color:#6b7280;margin-top:4px;display:flex;justify-content:space-between;">
+      <div id="fab-ac-dom-text" style="font-size:10px;color:#6b7280;margin-top:4px;display:flex;justify-content:space-between;">
         <span>DOM Nodes: --</span>
         <span>Active Images: --</span>
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:6px;margin-bottom:10px;text-align:center;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;text-align:center;">
       <div style="background:#030712;padding:6px;border-radius:6px;">
         <div style="font-size:9px;color:#9ca3af;">TOTAL ADDED</div>
-        <div id="fab-v6-added" style="font-size:15px;font-weight:700;color:#4ade80;">${state.addedTotal}</div>
+        <div id="fab-ac-added" style="font-size:16px;font-weight:700;color:#4ade80;">${state.addedTotal}</div>
       </div>
       <div style="background:#030712;padding:6px;border-radius:6px;">
         <div style="font-size:9px;color:#9ca3af;">UNTIL RELOAD</div>
-        <div id="fab-v6-batch" style="font-size:15px;font-weight:700;color:#38bdf8;">0 / ${state.refreshEveryN}</div>
-      </div>
-      <div style="background:#030712;padding:6px;border-radius:6px;">
-        <div style="font-size:9px;color:#9ca3af;">429 WAITS</div>
-        <div id="fab-v6-429" style="font-size:15px;font-weight:700;color:#f59e0b;">0</div>
+        <div id="fab-ac-batch" style="font-size:16px;font-weight:700;color:#38bdf8;">0 / ${state.refreshEveryN}</div>
       </div>
     </div>
 
-    <!-- Restored Delay Between Items Slider -->
     <div style="margin-bottom:8px;">
       <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;">
         <span>Delay Between Items:</span>
-        <span id="fab-v6-delay-val" style="color:#4ade80;font-weight:600;">${state.delayMs} ms</span>
+        <span id="fab-ac-delay-val" style="color:#4ade80;font-weight:600;">${state.delayMs} ms</span>
       </div>
-      <input id="fab-v6-delay" type="range" min="300" max="2500" step="50" value="${state.delayMs}" style="width:100%;cursor:pointer;" />
+      <input id="fab-ac-delay" type="range" min="300" max="2500" step="50" value="${state.delayMs}" style="width:100%;cursor:pointer;" />
     </div>
 
     <div style="margin-bottom:8px;">
       <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;">
         <span>Full Page Reload Every:</span>
-        <span id="fab-v6-ref-val" style="color:#38bdf8;font-weight:600;">${state.refreshEveryN} items</span>
+        <span id="fab-ac-ref-val" style="color:#38bdf8;font-weight:600;">${state.refreshEveryN} items</span>
       </div>
-      <input id="fab-v6-ref" type="range" min="10" max="100" step="5" value="${state.refreshEveryN}" style="width:100%;cursor:pointer;" />
+      <input id="fab-ac-ref" type="range" min="10" max="100" step="5" value="${state.refreshEveryN}" style="width:100%;cursor:pointer;" />
     </div>
 
     <div style="margin-bottom:8px;">
       <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;">
         <span>Memory Limit:</span>
-        <span id="fab-v6-lim-val" style="color:#f59e0b;font-weight:600;">${state.memLimitMB} MB</span>
+        <span id="fab-ac-lim-val" style="color:#f59e0b;font-weight:600;">${state.memLimitMB} MB</span>
       </div>
-      <input id="fab-v6-lim" type="range" min="150" max="1000" step="25" value="${state.memLimitMB}" style="width:100%;cursor:pointer;" />
+      <input id="fab-ac-lim" type="range" min="150" max="1000" step="25" value="${state.memLimitMB}" style="width:100%;cursor:pointer;" />
     </div>
 
     <div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#cbd5e1;">
       <span>On Memory Threshold:</span>
-      <select id="fab-v6-mem-act" style="background:#1f2937;color:#fff;border:1px solid #374151;border-radius:4px;padding:2px 6px;font-size:11px;">
+      <select id="fab-ac-mem-act" style="background:#1f2937;color:#fff;border:1px solid #374151;border-radius:4px;padding:2px 6px;font-size:11px;">
         <option value="reload" ${state.memAction === 'reload' ? 'selected' : ''}>Reload Page & Continue</option>
         <option value="stop" ${state.memAction === 'stop' ? 'selected' : ''}>Stop Script & Warn</option>
       </select>
     </div>
 
     <div style="display:flex;gap:6px;">
-      <button id="fab-v6-toggle" style="flex:1;padding:9px 10px;border:none;border-radius:6px;background:#22c55e;color:#052e16;font-weight:700;cursor:pointer;font-size:13px;">
+      <button id="fab-ac-toggle" style="flex:1;padding:9px 10px;border:none;border-radius:6px;background:#22c55e;color:#052e16;font-weight:700;cursor:pointer;font-size:13px;">
         ${state.running ? '⏸ Pause' : '▶ Start'}
       </button>
-      <button id="fab-v6-reload-now" title="Reload page now and auto-resume" style="padding:9px 10px;border:1px solid #374151;border-radius:6px;background:#1f2937;color:#e5e7eb;cursor:pointer;font-size:12px;">
+      <button id="fab-ac-reload-now" title="Reload page now and auto-resume" style="padding:9px 10px;border:1px solid #374151;border-radius:6px;background:#1f2937;color:#e5e7eb;cursor:pointer;font-size:12px;">
         🔄 Reload Now
       </button>
     </div>
@@ -579,43 +557,38 @@
 
   document.body.appendChild(panel);
 
-  const elStatus = document.getElementById('fab-v6-status');
-  const elReloads = document.getElementById('fab-v6-reloads');
-  const elEta = document.getElementById('fab-v6-eta');
-  const elRemAssets = document.getElementById('fab-v6-rem-assets');
-  const elPace = document.getElementById('fab-v6-pace');
-  const elMemText = document.getElementById('fab-v6-mem-text');
-  const elMemBar = document.getElementById('fab-v6-mem-bar');
-  const elDomText = document.getElementById('fab-v6-dom-text');
-  const elAdded = document.getElementById('fab-v6-added');
-  const elBatch = document.getElementById('fab-v6-batch');
-  const el429 = document.getElementById('fab-v6-429');
-  const elDelay = document.getElementById('fab-v6-delay');
-  const elDelayVal = document.getElementById('fab-v6-delay-val');
-  const elRef = document.getElementById('fab-v6-ref');
-  const elRefVal = document.getElementById('fab-v6-ref-val');
-  const elLim = document.getElementById('fab-v6-lim');
-  const elLimVal = document.getElementById('fab-v6-lim-val');
-  const elMemAct = document.getElementById('fab-v6-mem-act');
-  const btnToggle = document.getElementById('fab-v6-toggle');
-  const btnReloadNow = document.getElementById('fab-v6-reload-now');
+  const elStatus = document.getElementById('fab-ac-status');
+  const elEta = document.getElementById('fab-ac-eta');
+  const elRemAssets = document.getElementById('fab-ac-rem-assets');
+  const elPace = document.getElementById('fab-ac-pace');
+  const elMemText = document.getElementById('fab-ac-mem-text');
+  const elMemBar = document.getElementById('fab-ac-mem-bar');
+  const elDomText = document.getElementById('fab-ac-dom-text');
+  const elAdded = document.getElementById('fab-ac-added');
+  const elBatch = document.getElementById('fab-ac-batch');
+  const elDelay = document.getElementById('fab-ac-delay');
+  const elDelayVal = document.getElementById('fab-ac-delay-val');
+  const elRef = document.getElementById('fab-ac-ref');
+  const elRefVal = document.getElementById('fab-ac-ref-val');
+  const elLim = document.getElementById('fab-ac-lim');
+  const elLimVal = document.getElementById('fab-ac-lim-val');
+  const elMemAct = document.getElementById('fab-ac-mem-act');
+  const btnToggle = document.getElementById('fab-ac-toggle');
+  const btnReloadNow = document.getElementById('fab-ac-reload-now');
+  const btnClose = document.getElementById('fab-ac-close');
 
   function updateUI(msg) {
     if (msg) elStatus.textContent = msg;
-    elReloads.textContent = state.reloadCount;
     elAdded.textContent = state.addedTotal;
     elBatch.textContent = `${state.addedSession} / ${state.refreshEveryN}`;
-    el429.textContent = state.rateLimitHits;
     elDelay.value = state.delayMs;
     elDelayVal.textContent = `${state.delayMs} ms`;
 
-    // Update ETA Calculator
     const eta = getETADetails();
     elEta.textContent = eta.etaText;
     elRemAssets.textContent = `Remaining: ${eta.remainingText}`;
     elPace.textContent = eta.rateText;
 
-    // Update Memory Bar
     const mem = getMemoryStats();
     const pct = Math.min(100, Math.round((mem.estimatedTabMB / state.memLimitMB) * 100));
     elMemText.textContent = `${mem.estimatedTabMB} MB / ${state.memLimitMB} MB (${pct}%)`;
@@ -627,7 +600,7 @@
     btnToggle.style.color = state.running ? '#451a03' : '#052e16';
   }
 
-  setInterval(updateUI, 2000);
+  const uiInterval = setInterval(updateUI, 2000);
 
   elDelay.addEventListener('input', (e) => {
     state.delayMs = Number(e.target.value);
@@ -667,6 +640,14 @@
 
   btnReloadNow.addEventListener('click', () => {
     triggerHardPageReload();
+  });
+
+  btnClose.addEventListener('click', () => {
+    state.running = false;
+    saveState();
+    clearInterval(uiInterval);
+    window.__fabAutoClaimerLoaded = false;
+    panel.remove();
   });
 
   updateUI();
